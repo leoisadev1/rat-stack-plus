@@ -94,10 +94,12 @@ export function installHooksScript() {
   return `// Runs from the prepare script. lefthook fails outside a git repository, which is
 // normal while a package is being installed from a tarball or before \`git init\`.
 import { spawnSync } from "node:child_process";
+import { realpathSync } from "node:fs";
 
-const git = spawnSync("git", ["rev-parse", "--git-dir"], { stdio: "ignore" });
+const git = spawnSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" });
 
-if (git.status !== 0) process.exit(0);
+// Outside a repository, or inside an enclosing one such as a monorepo: leave its hooks alone.
+if (git.status !== 0 || realpathSync(git.stdout.trim()) !== realpathSync(process.cwd())) process.exit(0);
 
 const lefthook = spawnSync("lefthook", ["install"], { stdio: "inherit", shell: process.platform === "win32" });
 

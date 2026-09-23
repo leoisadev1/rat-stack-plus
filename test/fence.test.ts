@@ -1,9 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { blockHookBypassScript, lefthookConfig } from "../src/steps/fence.ts";
+import { blockHookBypassScript, installHooksScript, lefthookConfig } from "../src/steps/fence.ts";
 import { DEFAULT_CHOICES } from "../src/stack.ts";
 
 const script = path.join(mkdtempSync(path.join(tmpdir(), "rsp-fence-")), "block-hook-bypass.mjs");
@@ -52,5 +52,19 @@ describe("lefthookConfig", () => {
     const config = { ...DEFAULT_CHOICES, projectName: "app", projectDir: "/tmp/app", presetCode: "x", host: "localhost", port: 3000, packageManager: "pnpm" as const };
     expect(lefthookConfig(config)).toContain("run: pnpm run lint");
     expect(lefthookConfig(config)).toContain("run: pnpm run check-types");
+  });
+});
+
+describe("installHooksScript", () => {
+  it("leaves an enclosing repository's hooks alone", () => {
+    const parent = mkdtempSync(path.join(tmpdir(), "rsp-parent-"));
+    spawnSync("git", ["init", "-q"], { cwd: parent });
+    const app = path.join(parent, "app");
+    mkdirSync(app);
+    writeFileSync(path.join(app, "install.mjs"), installHooksScript());
+
+    const result = spawnSync(process.execPath, ["install.mjs"], { cwd: app, encoding: "utf8" });
+    expect(result.status).toBe(0);
+    expect(existsSync(path.join(parent, ".git/hooks/pre-commit"))).toBe(false);
   });
 });
