@@ -1,6 +1,6 @@
 {
   "name": "create-rat-stack-plus",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Scaffold a typed full-stack app on Cloudflare with Alchemy, D1, Turborepo, Oxlint, and a themed shadcn/ui package.",
   "type": "module",
   "license": "MIT",
