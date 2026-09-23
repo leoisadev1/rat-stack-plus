@@ -24,8 +24,8 @@
     "turborepo"
   ],
   "bin": {
-    "create-rat-stack-plus": "./dist/cli.mjs",
-    "rat-stack-plus": "./dist/cli.mjs"
+    "create-rat-stack-plus": "dist/cli.mjs",
+    "rat-stack-plus": "dist/cli.mjs"
   },
   "files": [
     "dist",

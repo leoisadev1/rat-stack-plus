@@ -1,4 +1,4 @@
-import { decodePreset, isPresetCode } from "shadcn/preset";
+import { decodePreset, encodePreset, isPresetCode } from "shadcn/preset";
 import { describe, expect, it } from "vitest";
 import { CURATED_THEMES, describePreset, presetUrl, randomPresetConfig, resolvePresetCode } from "../src/theme.ts";
 
@@ -28,7 +28,12 @@ describe("resolvePresetCode", () => {
     for (let seed = 1; seed <= 50; seed += 1) {
       const code = resolvePresetCode("random", seeded(seed));
       expect(decodePreset(code)?.iconLibrary).toBe("lucide");
+      expect(decodePreset(code)?.baseColor).not.toBe("gray");
     }
+  });
+
+  it("rejects the gray base color, which the registry doesn't serve", () => {
+    expect(() => resolvePresetCode(encodePreset({ baseColor: "gray" }))).toThrow(/gray/);
   });
 
   it("accepts a raw code and a shadcn create URL", () => {

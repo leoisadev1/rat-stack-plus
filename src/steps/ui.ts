@@ -4,7 +4,7 @@ import path from "node:path";
 import { runPackageBin } from "../exec.ts";
 import type { StackConfig } from "../stack.ts";
 import { starterUiFiles } from "../templates/ui.ts";
-import { describePreset, presetUrl } from "../theme.ts";
+import { themeInfo } from "../theme.ts";
 
 const COMPONENTS = [
   "avatar",
@@ -47,9 +47,7 @@ export async function buildStarterUi(config: StackConfig) {
     title: displayName(config.projectName),
     frontend: config.frontend,
     auth: config.auth,
-    presetCode: config.presetCode,
-    presetLabel: describePreset(config.presetCode),
-    presetUrl: presetUrl(config.presetCode),
+    theme: themeInfo(config),
   });
   for (const [file, content] of Object.entries(files)) {
     const target = path.join(srcDir, file);
@@ -57,7 +55,7 @@ export async function buildStarterUi(config: StackConfig) {
     await writeFile(target, content);
   }
 
-  if (config.frontend === "tanstack-start") await updateTanstackRoot(srcDir);
+  if (config.frontend === "tanstack-start") await updateTanstackRoot(srcDir, displayName(config.projectName));
   if (config.frontend === "next") await updateNextLayout(srcDir, displayName(config.projectName));
   if (config.frontend === "react-router") await updateReactRouterRoot(srcDir);
 }
@@ -95,10 +93,11 @@ async function edit(file: string, update: (source: string) => string) {
   await writeFile(file, update(await readFile(file, "utf8")));
 }
 
-async function updateTanstackRoot(srcDir: string) {
+async function updateTanstackRoot(srcDir: string, title: string) {
   const file = path.join(srcDir, "routes/__root.tsx");
   await edit(file, (source) => {
     const next = unwrapHeader(source, file)
+      .replace(/title: "[^"]*"/, `title: ${JSON.stringify(title)}`)
       .replace(`<html lang="en" className="dark">`, `<html lang="en" suppressHydrationWarning>`)
       .replace(
         "<Outlet />",
