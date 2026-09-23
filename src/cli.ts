@@ -7,27 +7,34 @@ import { CommandError, tail } from "./exec.ts";
 import {
   AUTH_PROVIDERS,
   DEFAULT_CHOICES,
+  DEFAULT_HOST,
+  DEFAULT_PORT,
   FRONTENDS,
   PACKAGE_MANAGERS,
   isAuth,
   isFrontend,
   isPackageManager,
   resolveProject,
+  devPorts,
   runCommand,
+  validateHost,
+  validatePort,
   validateProjectName,
   type Auth,
   type Frontend,
   type PackageManager,
   type StackConfig,
 } from "./stack.ts";
-import { parseDevPorts, writeAgentFiles } from "./steps/agents.ts";
-import { fixRootScripts, initGit } from "./steps/finalize.ts";
+import { writeAgentFiles } from "./steps/agents.ts";
+import { writeFence } from "./steps/fence.ts";
+import { fixCheckTypes, fixRootScripts, initGit } from "./steps/finalize.ts";
 import { setupLint } from "./steps/lint.ts";
 import { generateMigrations, setupLocalDev } from "./steps/localdev.ts";
 import { scaffold } from "./steps/scaffold.ts";
 import { applyTheme } from "./steps/theme.ts";
 import { buildStarterUi } from "./steps/ui.ts";
-import { CURATED_THEMES, describePreset, presetUrl, resolvePresetCode } from "./theme.ts";
+import { CURATED_THEMES, describePreset, resolvePresetCode, themeInfo } from "./theme.ts";
+import { CSS_THEME_BASE_PRESET, isCssThemePath, mergeThemeCss } from "./theme-css.ts";
 
 const VERSION = "0.1.0";
 
@@ -36,11 +43,14 @@ interface Flags {
   auth?: string;
   packageManager?: string;
   theme?: string;
+  port?: string;
+  host?: string;
   pointer?: boolean;
   rtl?: boolean;
   antiSlop?: boolean;
   shadcnLint?: boolean;
   agentTesting?: boolean;
+  fence?: boolean;
   git?: boolean;
   yes?: boolean;
 }
@@ -51,6 +61,7 @@ const TOGGLES = [
   { key: "antiSlop", label: "anti-slop lint rules", hint: "dmmulroy/anti-slop" },
   { key: "shadcnLint", label: "shadcn lint rules", hint: "@shadcn/lint" },
   { key: "agentTesting", label: "Agent testing skill", hint: "AGENTS.md, test skill, smoke script" },
+  { key: "fence", label: "Commit fence", hint: "lefthook hooks, and agent hooks that block --no-verify" },
   { key: "git", label: "Initialize git" },
 ] as const;
 
@@ -66,7 +77,9 @@ const program = new Command()
   .addOption(
     new Option("--pm, --package-manager <pm>", "package manager").choices(PACKAGE_MANAGERS.map((m) => m.value)),
   )
-  .option("--theme <theme>", `"random", a curated theme (${Object.keys(CURATED_THEMES).join(", ")}), a preset code, or a shadcn create URL`)
+  .option("--theme <theme>", `"random", a curated theme (${Object.keys(CURATED_THEMES).join(", ")}), a preset code, a shadcn create URL, or a path to a theme .css file`)
+  .option("--port <port>", `local dev port for the server; the web app uses the next one (default ${DEFAULT_PORT})`)
+  .option("--host <host>", "address the dev servers advertise, such as a Tailscale IP, for opening the app from other devices")
   .option("--pointer", "pointer cursor on buttons")
   .option("--no-pointer", "skip: pointer cursor on buttons")
   .option("--rtl", "right-to-left support")
@@ -77,6 +90,8 @@ const program = new Command()
   .option("--no-shadcn-lint", "skip: @shadcn/lint Oxlint rules")
   .option("--agent-testing", "AGENTS.md, agent test skill, and smoke script")
   .option("--no-agent-testing", "skip: AGENTS.md, agent test skill, and smoke script")
+  .option("--fence", "lefthook git hooks and agent hooks that block skipping them")
+  .option("--no-fence", "skip: lefthook git hooks and agent hooks that block skipping them")
   .option("--git", "initialize a git repository")
   .option("--no-git", "skip: initialize a git repository")
   .option("-y, --yes", "accept defaults for anything not passed as a flag")
@@ -173,22 +188,62 @@ async function main(directory: string | undefined, flags: Flags) {
           )
         : detectPackageManager();
 
-  const presetCode = await chooseTheme(flags.theme, interactive);
+  const portProblem = flags.port === undefined ? undefined : validatePort(flags.port);
+  if (portProblem) fail(`--port: ${portProblem}`);
+  const hostProblem = flags.host === undefined ? undefined : validateHost(flags.host);
+  if (hostProblem) fail(`--host: ${hostProblem}`);
+  const port = flags.port === undefined ? DEFAULT_PORT : Number(flags.port);
+  const host = flags.host ?? DEFAULT_HOST;
+
+  const { presetCode, themeCss } = await chooseTheme(flags.theme, interactive);
   const toggles = await chooseToggles(flags, interactive);
 
-  const config: StackConfig = { projectName, projectDir, frontend, auth, packageManager, presetCode, ...toggles };
+  const config: StackConfig = {
+    projectName,
+    projectDir,
+    frontend,
+    auth,
+    packageManager,
+    presetCode,
+    themeCss,
+    host,
+    port,
+    ...toggles,
+  };
   await build(config);
 }
 
-async function chooseTheme(flag: string | undefined, interactive: boolean) {
-  if (flag) {
-    try {
-      return resolvePresetCode(flag);
-    } catch (error) {
-      fail(error instanceof Error ? error.message : String(error));
-    }
+interface ThemeChoice {
+  presetCode: string;
+  themeCss?: string;
+}
+
+/** Resolves `--theme`: a .css path is merged over the base preset, anything else is a preset. */
+function resolveTheme(input: string): ThemeChoice {
+  if (!isCssThemePath(input)) return { presetCode: resolvePresetCode(input) };
+  const themeCss = path.resolve(process.cwd(), input.trim());
+  if (!existsSync(themeCss)) throw new Error(`${input} doesn't exist.`);
+  // Fails early on a file with no theme variables, before anything is scaffolded.
+  mergeThemeCss("", readFileSync(themeCss, "utf8"), path.basename(themeCss));
+  return { presetCode: CSS_THEME_BASE_PRESET, themeCss };
+}
+
+function themeProblem(value: string) {
+  try {
+    resolveTheme(value);
+    return undefined;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
   }
-  if (!interactive) return resolvePresetCode("random");
+}
+
+async function chooseTheme(flag: string | undefined, interactive: boolean): Promise<ThemeChoice> {
+  if (flag) {
+    const problem = themeProblem(flag);
+    if (problem) fail(problem);
+    return resolveTheme(flag);
+  }
+  if (!interactive) return resolveTheme("random");
 
   const choice = exitIfCancelled(
     await p.select<string>({
@@ -201,27 +256,25 @@ async function chooseTheme(flag: string | undefined, interactive: boolean) {
           hint: describePreset(resolvePresetCode(name)),
         })),
         { value: "custom", label: "Paste a preset", hint: "code or ui.shadcn.com/create URL" },
+        { value: "css", label: "Use a CSS file", hint: "a shadcn theme export, merged over the default preset" },
       ],
       initialValue: "random",
     }),
   );
-  if (choice !== "custom") return resolvePresetCode(choice);
-
-  const custom = exitIfCancelled(
-    await p.text({
-      message: "Preset code or URL",
-      placeholder: "https://ui.shadcn.com/create?preset=...",
-      validate: (value) => {
-        try {
-          resolvePresetCode(value ?? "");
-          return undefined;
-        } catch (error) {
-          return error instanceof Error ? error.message : String(error);
-        }
-      },
-    }),
-  );
-  return resolvePresetCode(custom);
+  if (choice === "custom" || choice === "css") {
+    const custom = exitIfCancelled(
+      await p.text({
+        message: choice === "css" ? "Path to the theme CSS file" : "Preset code or URL",
+        placeholder: choice === "css" ? "./theme.css" : "https://ui.shadcn.com/create?preset=...",
+        validate: (value) => {
+          if (choice === "css" && !isCssThemePath(value ?? "")) return "Enter a path ending in .css.";
+          return themeProblem(value ?? "");
+        },
+      }),
+    );
+    return resolveTheme(custom);
+  }
+  return resolveTheme(choice);
 }
 
 async function chooseToggles(flags: Flags, interactive: boolean): Promise<Record<ToggleKey, boolean>> {
@@ -247,9 +300,19 @@ async function chooseToggles(flags: Flags, interactive: boolean): Promise<Record
   return values;
 }
 
+/** A spinner only helps a person watching a terminal; logs and CI get one line per step. */
+function progress(label: string) {
+  if (process.stdout.isTTY) {
+    const spin = p.spinner();
+    spin.start(label);
+    return spin;
+  }
+  p.log.step(label);
+  return { stop: (message: string) => p.log.success(message), error: (message: string) => p.log.error(message) };
+}
+
 async function step<T>(label: string, done: string, task: () => Promise<T>): Promise<T> {
-  const spin = p.spinner();
-  spin.start(label);
+  const spin = progress(label);
   try {
     const result = await task();
     spin.stop(done);
@@ -272,23 +335,25 @@ async function build(config: StackConfig) {
     [
       `${pc.bold(config.projectName)}  ${pc.dim(config.projectDir)}`,
       `${frontendLabel} + Hono + oRPC, Drizzle on D1, ${authLabel}, ${config.packageManager}`,
-      `Theme ${config.presetCode} (${describePreset(config.presetCode)})`,
+      config.themeCss ? `Theme ${config.themeCss}` : `Theme ${config.presetCode} (${describePreset(config.presetCode)})`,
     ].join("\n"),
   );
 
   await step("Scaffolding and installing dependencies", "Project scaffolded", () => scaffold(config));
-  await step("Applying the shadcn preset", "Theme applied", () => applyTheme(config));
+  await step(config.themeCss ? "Applying the theme CSS" : "Applying the shadcn preset", "Theme applied", () => applyTheme(config));
   await step("Building the starter UI", "Starter UI ready", () => buildStarterUi(config));
-  const ports = parseDevPorts(readFileSync(path.join(config.projectDir, "packages/infra/alchemy.run.ts"), "utf8"));
-  // Local dev and agent files come before lint so their scripts are linted and baselined with everything else.
+  const ports = devPorts(config);
+  // Local dev, agent files, and the fence come before lint so their scripts are linted and baselined with everything else.
   await step("Setting up local dev", "Local dev ready", async () => {
     await fixRootScripts(config.projectDir);
+    await fixCheckTypes(config);
     await generateMigrations(config);
-    await setupLocalDev(config, ports);
+    await setupLocalDev(config);
   });
   await step("Writing agent files", "Agent files written", () => writeAgentFiles(config));
+  if (config.fence) await step("Building the commit fence", "Commit fence ready", () => writeFence(config));
   const lint = await step("Setting up Oxlint", "Oxlint configured", () => setupLint(config));
-  const git = await step("Initializing git", "Git ready", () => initGit(config));
+  const git = config.git ? await step("Initializing git", "Git ready", () => initGit(config)) : "skipped";
 
   if (!lint.lintPasses) {
     p.log.warn(`Oxlint still reports errors. Run the lint script to see them.\n${pc.dim(tail(lint.output, 15))}`);
@@ -305,13 +370,13 @@ async function build(config: StackConfig) {
   p.note(
     [
       `cd ${cdTarget(config.projectDir)}`,
-      `${runCommand(config.packageManager, "dev")}   ${pc.dim(`# server :${ports.server} and web :${ports.web}, local D1, no account needed`)}`,
+      `${runCommand(config.packageManager, "dev")}   ${pc.dim(`# web http://${config.host}:${ports.web}, server :${ports.server}, local D1, no account needed`)}`,
       "",
       pc.dim("To deploy, add Cloudflare to your Alchemy profile once, then deploy:"),
       `(cd packages/infra && ${x} alchemy profile edit --profile default --add Cloudflare)`,
       runCommand(config.packageManager, "deploy"),
       "",
-      pc.dim(`Theme: ${presetUrl(config.presetCode)}`),
+      pc.dim(config.themeCss ? "Theme: packages/ui/src/styles/globals.css" : `Theme: ${themeInfo(config).url}`),
     ].join("\n"),
     "Next steps",
   );

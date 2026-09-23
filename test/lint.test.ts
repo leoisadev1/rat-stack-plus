@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { baselineOverrides, buildOxlintConfig, escapeGlob, fixTemplateClasses, oxlintRuleName } from "../src/steps/lint.ts";
-import { parseDevPorts } from "../src/steps/agents.ts";
 
 const base = { plugins: ["typescript"], ignorePatterns: ["dist"], rules: { "no-console": "warn" as const } };
 const all = { antiSlop: true, antiSlopEffect: true, shadcnLint: true, uiImport: "@app/ui/components" };
@@ -87,12 +86,5 @@ describe("escapeGlob", () => {
     expect(baselineOverrides([{ code: "eslint(no-console)", filename: "app/[id]/page.tsx" }])[0]?.files).toEqual([
       "app/\\[id\\]/page.tsx",
     ]);
-  });
-});
-
-describe("parseDevPorts", () => {
-  it("reads server then web ports", () => {
-    expect(parseDevPorts("dev: { port: 4000 } ... dev: { port: 4001 }")).toEqual({ server: 4000, web: 4001 });
-    expect(parseDevPorts("")).toEqual({ server: 3000, web: 3001 });
   });
 });

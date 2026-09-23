@@ -25,7 +25,10 @@ my-app/
 │   ├── infra/      alchemy.run.ts: D1 database and both workers
 │   └── ui/         shadcn/ui components on Base UI, plus the theme
 ├── tools/oxlint/anti-slop/
+├── scripts/hooks/  lefthook installer and the agent hook that blocks --no-verify
 ├── AGENTS.md
+├── dev.config.json  local dev address and ports
+├── lefthook.yml
 ├── .agents/skills/test-my-app/SKILL.md
 ├── turbo.json
 └── .oxlintrc.json
@@ -35,7 +38,7 @@ These parts are fixed: Hono on Cloudflare Workers, oRPC, Drizzle with SQLite on 
 
 ## Options
 
-Run without flags to answer prompts. Pass `--yes` to take the defaults for anything you didn't set. In a non-interactive shell the CLI behaves as if you passed `--yes`.
+Run without flags to answer prompts. Pass `--yes` to take the defaults for anything you didn't set. In a non-interactive shell the CLI behaves as if you passed `--yes`, and prints one line per step instead of animating a spinner.
 
 | Flag | Values | Default |
 | --- | --- | --- |
@@ -43,11 +46,14 @@ Run without flags to answer prompts. Pass `--yes` to take the defaults for anyth
 | `--auth` | `better-auth`, `clerk`, `none` | `better-auth` |
 | `--pm` | `bun`, `pnpm`, `npm` | the one that ran the CLI, else `bun` |
 | `--theme` | see [Themes](#themes) | `random` |
+| `--port` | the server's dev port; the web app uses the next one | `3000` |
+| `--host` | the address the dev servers advertise, such as a Tailscale IP | `localhost` |
 | `--pointer` / `--no-pointer` | pointer cursor on buttons | on |
 | `--rtl` / `--no-rtl` | right-to-left support | off |
 | `--anti-slop` / `--no-anti-slop` | anti-slop Oxlint rules | on |
 | `--shadcn-lint` / `--no-shadcn-lint` | @shadcn/lint Oxlint rules | on |
 | `--agent-testing` / `--no-agent-testing` | test skill and smoke script | on |
+| `--fence` / `--no-fence` | lefthook git hooks, and agent hooks that block skipping them | on |
 | `--git` / `--no-git` | `git init` | on |
 
 ```sh
@@ -62,10 +68,23 @@ bunx create-rat-stack-plus my-app --frontend next --auth clerk --pm pnpm --theme
 - A curated name: `emerald-mist`, `violet-terminal`, `amber-editorial`, `sky-grotesk`, or `rose-taupe`.
 - A preset code from [ui.shadcn.com/create](https://ui.shadcn.com/create), such as `b7Br7G7Ci`.
 - The full create URL, such as `https://ui.shadcn.com/create?preset=b7Br7G7Ci`.
+- A path to a CSS file ending in `.css`, such as `./theme.css`. See [Theme CSS files](#theme-css-files).
 
 The CLI runs `shadcn apply` with the preset, which rewrites the components in `packages/ui` and adds the fonts. Icons stay on lucide whatever the preset says, because the generated app imports `lucide-react` directly. The summary at the end prints the preset URL so you can open the theme in shadcn create and tweak it.
 
 To change the theme later, run `shadcn apply --preset <code>` from `apps/web`.
+
+### Theme CSS files
+
+A theme exported from [tweakcn](https://tweakcn.com) or the [shadcn themes page](https://ui.shadcn.com/themes) is a CSS file with variables in `:root`, `.dark`, and `@theme inline`. Pass its path to use it:
+
+```sh
+bunx create-rat-stack-plus my-app --theme ./theme.css
+```
+
+The CLI applies shadcn's default preset for the components and icons, then merges the file into `packages/ui/src/styles/globals.css`. Each variable in the file replaces the preset's value or is added next to them. `@import` rules, such as a Google Fonts URL, go at the top of the file, because CSS doesn't allow them after Tailwind's rules. Any other rules are appended at the end. The CLI rejects a file that sets no variables.
+
+The file sets font names but can't load the fonts, so include an `@import` for them or install them yourself. Running `shadcn apply` afterwards replaces the merged variables with the preset's.
 
 `--pointer` adds a base-layer rule that gives enabled buttons `cursor: pointer`. `--rtl` runs `shadcn migrate rtl`, which converts the components to logical properties such as `ms-2` and `ps-4`. Set `dir="rtl"` on the root element to flip the layout.
 
@@ -84,7 +103,15 @@ The generated templates break some of these rules. The CLI fixes what it safely 
 `AGENTS.md` describes the layout, commands, theme, auth, and lint rules. `CLAUDE.md` imports it. With agent testing on, the CLI also writes:
 
 - `.agents/skills/test-<name>/SKILL.md`, with a symlink at `.claude/skills/test-<name>`. It tells an agent how to prove a change: lint and type check first, then launch the stack, wait for readiness, smoke test, and clean up.
-- `scripts/smoke.mjs`, run with the `smoke` script. It checks that the server answers `OK` on port 3000 and the web app answers on port 3001.
+- `scripts/smoke.mjs`, run with the `smoke` script. It reads the address and ports from `dev.config.json`, then checks that the server answers `OK` and the web app answers.
+
+## Commit fence
+
+Rat Stack keeps agents honest with a fence: git hooks that run checks, and agent hooks that refuse to skip them. Rat Stack Plus ports the idea. With the fence on, the CLI writes:
+
+- `lefthook.yml`, which runs `lint` before every commit and `check-types` before every push. The `prepare` script installs the hooks after each dependency install, and does nothing outside a git repository.
+- `scripts/hooks/block-hook-bypass.mjs`, registered as a Claude Code `PreToolUse` hook in `.claude/settings.json` and a Cursor `beforeShellExecution` hook in `.cursor/hooks.json`. It denies git commands that use `--no-verify`, `commit -n`, `LEFTHOOK=0`, or `core.hooksPath`.
+- A Fence section in `AGENTS.md` that tells agents to fix hook failures instead of working around them, and that lint baselines only shrink.
 
 ## Running the project
 
@@ -95,7 +122,25 @@ cd my-app
 bun run dev   # server on http://localhost:3000, web on http://localhost:3001
 ```
 
-Turborepo starts the server and the web app side by side. The server runs under Wrangler with a local D1 database, and the migrations the CLI generated are applied to it on every start. If port 3000 is taken, the dev script says so; change `dev.port` in `apps/server/wrangler.jsonc` and the `localhost:3000` URLs in `apps/server/.env` and `apps/web/.env`. `bun run dev:web` runs only the web app.
+Turborepo starts the server and the web app side by side. The server runs under Wrangler with a local D1 database, and the migrations the CLI generated are applied to it on every start. `bun run dev:web` runs only the web app.
+
+Local D1, KV, R2, Durable Objects, Queues, and Workflows all run in Wrangler's simulator. Analytics Engine and Pipelines have no local simulator: writes succeed and go nowhere. `AGENTS.md` explains how to add a binding.
+
+The address and ports live in `dev.config.json` at the root:
+
+```json
+{ "host": "localhost", "serverPort": 3000, "webPort": 3001 }
+```
+
+Both dev scripts, the auth and CORS URLs, and the smoke test read it, so moving a port means editing one file. If a port is taken, the dev script says so. `--port` and `--host` set these values when the project is generated.
+
+To open the app from another device, set the host to an address that device can reach, such as a Tailscale IP, or pass it for one run:
+
+```sh
+DEV_HOST=100.64.0.1 bun run dev
+```
+
+An IP address binds only that interface. A hostname binds every interface, because the dev servers can't bind a name.
 
 Deploying goes through Alchemy, which needs a Cloudflare account in its profile. Set that up once, then deploy:
 
@@ -104,7 +149,7 @@ Deploying goes through Alchemy, which needs a Cloudflare account in its profile.
 bun run deploy
 ```
 
-`bun run dev:cloud` runs Alchemy's own dev mode, which also needs the profile.
+`bun run plan` shows what a deploy would change without changing anything. `bun run dev:cloud` runs Alchemy's own dev mode, which also needs the profile.
 
 With Clerk, put your keys in `apps/web/.env` and `apps/server/.env` first. `deploy` and `destroy` deploy or tear down the Cloudflare resources.
 
@@ -117,7 +162,11 @@ Better-T-Stack 3.44.1 output has a few problems, which the CLI corrects:
 - The migrations folder starts empty, so a fresh database has no tables. The CLI generates the first migration.
 - `dev:web` calls a turbo task that `turbo.json` never declares. The CLI adds it.
 - `shadcn apply` writes an `apps/web/src/lib/utils.ts` that imports a missing `cn` package. The CLI deletes it; the app already imports `cn` from the UI package.
+- There's no way to preview a deploy. The CLI adds a `plan` script that runs `alchemy plan`.
 - `.alchemy`, where Alchemy keeps local state, is added to `.gitignore`.
+- TanStack Start's `check-types` runs a full `vite build` to produce the route tree. The CLI swaps it for `tsr generate`, and declares each package's `check-types` outputs so Turborepo stops warning about missing ones.
+- The generated `cn` package is too old for `@shadcn/lint`, which warns and falls back to its own copy. With shadcn lint on, the CLI moves it to 0.3.2 or later.
+- The server's env module has a triple-slash path reference that Oxlint flags. The CLI removes it; `tsconfig.json` already includes the file.
 
 Git makes the initial commit only when `user.name` and `user.email` are set. Otherwise the repository is created without a commit.
 

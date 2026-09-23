@@ -1,4 +1,5 @@
 import type { Auth, Frontend } from "../stack.ts";
+import type { ThemeInfo } from "../theme.ts";
 
 /** What the starter UI templates need to know about the project. */
 export interface UiContext {
@@ -6,9 +7,7 @@ export interface UiContext {
   title: string;
   frontend: Frontend;
   auth: Auth;
-  presetCode: string;
-  presetLabel: string;
-  presetUrl: string;
+  theme: ThemeInfo;
 }
 
 const FRONTEND_LABELS: Record<Frontend, string> = {
@@ -26,7 +25,7 @@ const CLERK_PACKAGES: Record<Frontend, string> = {
 /**
  * Returns the starter UI as a map of paths relative to apps/web/src. The pages are
  * built from shadcn components and blocks (login-03, sidebar-07), so the chosen
- * preset themes all of them.
+ * theme styles all of them.
  */
 export function starterUiFiles(ctx: UiContext): Record<string, string> {
   const files: Record<string, string> = {
@@ -89,10 +88,9 @@ export const site = {
   name: ${JSON.stringify(ctx.title)},
   serverUrl,
   apiReferenceUrl: \`\${serverUrl}/api-reference\`,
-  preset: {
-    code: ${JSON.stringify(ctx.presetCode)},
-    label: ${JSON.stringify(ctx.presetLabel)},
-    url: ${JSON.stringify(ctx.presetUrl)},
+  theme: {
+    label: ${JSON.stringify(ctx.theme.label)},
+    url: ${JSON.stringify(ctx.theme.url)},
   },
 };
 `;
@@ -257,7 +255,7 @@ function homePage(ctx: UiContext) {
   const stack = [FRONTEND_LABELS[ctx.frontend], "Hono and oRPC on Cloudflare Workers", "Drizzle on D1"];
   if (ctx.auth === "better-auth") stack.push("Better Auth");
   if (ctx.auth === "clerk") stack.push("Clerk");
-  const description = `${stack.slice(0, -1).join(", ")} and ${stack.at(-1)}, themed with your shadcn preset.`;
+  const description = `${stack.slice(0, -1).join(", ")} and ${stack.at(-1)}, themed with ${ctx.theme.source}.`;
 
   let imports = "";
   let body = "";
@@ -275,7 +273,7 @@ function homePage(ctx: UiContext) {
               <ArrowRightIcon data-icon="inline-end" />
             </AppLink>`;
   } else {
-    primary = `<a href={site.preset.url} target="_blank" rel="noreferrer" className={buttonVariants({ size: "lg" })}>
+    primary = `<a href={site.theme.url} target="_blank" rel="noreferrer" className={buttonVariants({ size: "lg" })}>
               Customize the theme
               <ArrowRightIcon data-icon="inline-end" />
             </a>`;
@@ -370,7 +368,7 @@ ${body}
           <Card>
             <CardHeader>
               <CardTitle>Theme</CardTitle>
-              <CardDescription>{site.preset.label}</CardDescription>
+              <CardDescription>{site.theme.label}</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="flex gap-2">
@@ -382,8 +380,8 @@ ${body}
               </div>
             </CardContent>
             <CardFooter>
-              <a href={site.preset.url} target="_blank" rel="noreferrer" className={buttonVariants({ variant: "outline", size: "sm" })}>
-                Open preset {site.preset.code}
+              <a href={site.theme.url} target="_blank" rel="noreferrer" className={buttonVariants({ variant: "outline", size: "sm" })}>
+                ${ctx.theme.linkLabel}
                 <ArrowUpRightIcon data-icon="inline-end" />
               </a>
             </CardFooter>
@@ -888,7 +886,7 @@ export function AppSidebar({ user, ...actions }: { user: DashboardUser } & Accou
               </SidebarMenuButton>
             </SidebarMenuItem>
             <SidebarMenuItem>
-              <SidebarMenuButton tooltip="Theme" render={<a href={site.preset.url} target="_blank" rel="noreferrer" />}>
+              <SidebarMenuButton tooltip="Theme" render={<a href={site.theme.url} target="_blank" rel="noreferrer" />}>
                 <PaletteIcon />
                 <span>Theme</span>
               </SidebarMenuButton>

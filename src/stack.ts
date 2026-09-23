@@ -1,3 +1,4 @@
+import { isIPv4 } from "node:net";
 import path from "node:path";
 
 export const FRONTENDS = [
@@ -29,15 +30,52 @@ export interface StackConfig {
   auth: Auth;
   packageManager: PackageManager;
   presetCode: string;
+  /** A theme stylesheet merged over the preset, set by `--theme ./theme.css`. */
+  themeCss?: string;
+  /** Address the dev servers bind to and advertise, such as a Tailscale IP. */
+  host: string;
+  /** The server's dev port. The web app runs on the next port up. */
+  port: number;
   pointer: boolean;
   rtl: boolean;
   antiSlop: boolean;
   shadcnLint: boolean;
   agentTesting: boolean;
+  fence: boolean;
   git: boolean;
 }
 
-export type StackChoices = Omit<StackConfig, "projectName" | "projectDir" | "presetCode">;
+export type StackChoices = Omit<StackConfig, "projectName" | "projectDir" | "presetCode" | "themeCss" | "host" | "port">;
+
+export const DEFAULT_HOST = "localhost";
+export const DEFAULT_PORT = 3000;
+
+export interface DevPorts {
+  server: number;
+  web: number;
+}
+
+export function devPorts(config: Pick<StackConfig, "port">): DevPorts {
+  return { server: config.port, web: config.port + 1 };
+}
+
+/** The server port must leave room for the web app on the next port. */
+export function validatePort(value: string): string | undefined {
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1024 || port > 65_534) return "Use a port from 1024 to 65534.";
+  return undefined;
+}
+
+/** A hostname or IPv4 address other devices can reach, such as a Tailscale address. */
+export function validateHost(value: string): string | undefined {
+  if (value === "0.0.0.0" || value === "::") {
+    return "Use the address other devices open, such as a Tailscale IP or hostname. Hostnames bind every interface on their own.";
+  }
+  if (!/^[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?$/.test(value)) return `"${value}" is not a hostname or IPv4 address.`;
+  // The dev scripts treat four dotted numbers as an IP and bind it, so it has to be a real one.
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(value) && !isIPv4(value)) return `"${value}" is not a valid IPv4 address.`;
+  return undefined;
+}
 
 export const DEFAULT_CHOICES: StackChoices = {
   frontend: "tanstack-start",
@@ -48,6 +86,7 @@ export const DEFAULT_CHOICES: StackChoices = {
   antiSlop: true,
   shadcnLint: true,
   agentTesting: true,
+  fence: true,
   git: true,
 };
 

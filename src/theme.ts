@@ -77,6 +77,11 @@ const HEADING_FONTS = [
   "inherit", "inherit", "inherit", "lora", "instrument-serif", "playfair-display", "eb-garamond",
 ] as const satisfies readonly PresetConfig["fontHeading"][];
 
+/** shadcn/preset lists `gray`, but the registry rejects it with a 400. */
+const UNSUPPORTED_BASE_COLORS: readonly string[] = ["gray"];
+
+const BASE_COLORS = PRESET_BASE_COLORS.filter((color) => !UNSUPPORTED_BASE_COLORS.includes(color));
+
 type RandomSource = () => number;
 
 function pick<T>(values: readonly T[], random: RandomSource): T {
@@ -90,7 +95,7 @@ export function randomPresetConfig(random: RandomSource = Math.random): Partial<
   const theme = pick(ACCENT_THEMES, random);
   return {
     style: pick(PRESET_STYLES, random),
-    baseColor: pick(PRESET_BASE_COLORS, random),
+    baseColor: pick(BASE_COLORS, random),
     theme,
     chartColor: random() < 0.5 ? theme : pick(ACCENT_THEMES, random),
     iconLibrary: "lucide",
@@ -119,6 +124,11 @@ export function resolvePresetCode(input: string, random: RandomSource = Math.ran
       `"${input}" is not a theme. Use "random", one of ${Object.keys(CURATED_THEMES).join(", ")}, or a preset code from https://ui.shadcn.com/create.`,
     );
   }
+  if (UNSUPPORTED_BASE_COLORS.includes(config.baseColor)) {
+    throw new Error(
+      `The shadcn registry doesn't serve the "${config.baseColor}" base color yet. Pick another base color in https://ui.shadcn.com/create.`,
+    );
+  }
   if (config.iconLibrary !== "lucide") {
     return encodePreset({ ...config, iconLibrary: "lucide" });
   }
@@ -139,4 +149,28 @@ export function describePreset(code: string): string {
 
 export function presetUrl(code: string): string {
   return `https://ui.shadcn.com/create?preset=${code}`;
+}
+
+export const THEMING_DOCS_URL = "https://ui.shadcn.com/docs/theming";
+
+/** How the generated app and docs describe its theme: a preset, or a CSS file merged over the base preset. */
+export interface ThemeInfo {
+  label: string;
+  url: string;
+  linkLabel: string;
+  /** Ends the home page description: "themed with ...". */
+  source: string;
+}
+
+export function themeInfo(config: { presetCode: string; themeCss?: string | undefined }): ThemeInfo {
+  if (config.themeCss) {
+    const file = config.themeCss.split(/[\\/]/).at(-1) ?? config.themeCss;
+    return { label: `Custom theme from ${file}`, url: THEMING_DOCS_URL, linkLabel: "Theming guide", source: "your own theme CSS" };
+  }
+  return {
+    label: describePreset(config.presetCode),
+    url: presetUrl(config.presetCode),
+    linkLabel: `Open preset ${config.presetCode}`,
+    source: "your shadcn preset",
+  };
 }

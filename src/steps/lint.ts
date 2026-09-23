@@ -6,6 +6,8 @@ import { run } from "../exec.ts";
 import type { PackageManager, StackConfig } from "../stack.ts";
 
 export const SHADCN_LINT_VERSION = "0.2.0";
+/** @shadcn/lint's grammar needs cn 0.3.2 or later; with an older cn it warns and falls back to its own copy. */
+export const CN_VERSION = "^0.3.2";
 const ANTI_SLOP_DIR = "tools/oxlint/anti-slop";
 
 const ANTI_SLOP_RULES = [
@@ -159,10 +161,10 @@ export function baselineOverrides(diagnostics: readonly Diagnostic[]): NonNullab
     byFile.set(filename, rules);
   }
   return [...byFile.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
+    .toSorted(([a], [b]) => a.localeCompare(b))
     .map(([file, rules]) => ({
       files: [escapeGlob(file)],
-      rules: Object.fromEntries([...rules].sort().map((rule) => [rule, "warn" as const])),
+      rules: Object.fromEntries([...rules].toSorted().map((rule) => [rule, "warn" as const])),
     }));
 }
 
@@ -212,6 +214,7 @@ export async function setupLint(config: StackConfig) {
       devDependencies,
     };
   });
+  if (config.shadcnLint) await updateCn(root);
   await install(config.packageManager, root);
 
   const uiImport = await uiImportPath(root);
@@ -285,16 +288,33 @@ async function updateRootPackage(root: string, update: (pkg: PackageJson) => Pac
   await writeJson(pkgPath, update(pkg));
 }
 
-async function workspaceDependsOn(root: string, dependency: string) {
+/** Moves every workspace package on cn 0.2 or older to a version @shadcn/lint can read. */
+async function updateCn(root: string) {
+  for (const pkgPath of await workspacePackages(root)) {
+    const pkg = JSON.parse(await readFile(pkgPath, "utf8")) as PackageJson;
+    const current = pkg.dependencies?.cn;
+    if (!current || !/^[\^~]?0\.[0-2]\./.test(current)) continue;
+    await writeJson(pkgPath, { ...pkg, dependencies: { ...pkg.dependencies, cn: CN_VERSION } });
+  }
+}
+
+async function workspacePackages(root: string) {
+  const packages: string[] = [];
   for (const group of ["apps", "packages"]) {
     const groupDir = path.join(root, group);
     if (!existsSync(groupDir)) continue;
     for (const name of await readdir(groupDir)) {
       const pkgPath = path.join(groupDir, name, "package.json");
-      if (!existsSync(pkgPath)) continue;
-      const pkg = JSON.parse(await readFile(pkgPath, "utf8")) as PackageJson;
-      if (pkg.dependencies?.[dependency] || pkg.devDependencies?.[dependency]) return true;
+      if (existsSync(pkgPath)) packages.push(pkgPath);
     }
+  }
+  return packages;
+}
+
+async function workspaceDependsOn(root: string, dependency: string) {
+  for (const pkgPath of await workspacePackages(root)) {
+    const pkg = JSON.parse(await readFile(pkgPath, "utf8")) as PackageJson;
+    if (pkg.dependencies?.[dependency] || pkg.devDependencies?.[dependency]) return true;
   }
   return false;
 }

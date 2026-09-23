@@ -3,6 +3,7 @@ import { readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { runPackageBin } from "../exec.ts";
 import type { StackConfig } from "../stack.ts";
+import { mergeThemeCss } from "../theme-css.ts";
 
 const POINTER_RULE = `
 @layer base {
@@ -30,6 +31,7 @@ export async function applyTheme(config: StackConfig) {
   if (!hadUtils && existsSync(strayUtils)) await rm(strayUtils);
 
   await inheritPresetFont(config.projectDir);
+  if (config.themeCss) await applyThemeCss(config.projectDir, config.themeCss);
   if (config.pointer) await addPointerCursor(config.projectDir);
   if (config.rtl) await enableRtl(config.projectDir, webDir);
 }
@@ -41,6 +43,13 @@ async function inheritPresetFont(projectDir: string) {
   const cssPath = path.join(projectDir, "packages/ui/src/styles/globals.css");
   const css = await readFile(cssPath, "utf8");
   await writeFile(cssPath, css.replace("@apply font-sans bg-background text-foreground;", "@apply bg-background text-foreground;"));
+}
+
+/** Merges a theme stylesheet over the base preset in the shared UI package. */
+async function applyThemeCss(projectDir: string, themeCss: string) {
+  const cssPath = path.join(projectDir, "packages/ui/src/styles/globals.css");
+  const merged = mergeThemeCss(await readFile(cssPath, "utf8"), await readFile(themeCss, "utf8"), path.basename(themeCss));
+  await writeFile(cssPath, merged);
 }
 
 async function addPointerCursor(projectDir: string) {
