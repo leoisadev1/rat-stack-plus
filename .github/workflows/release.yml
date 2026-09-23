@@ -1,0 +1,44 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+concurrency: release-${{ github.ref }}
+
+jobs:
+  release:
+    name: Version or publish
+    if: vars.RAT_STACK_PLUS_RELEASE_ENABLED == 'true'
+    # npm trusted publishing only accepts GitHub-hosted runners, so this job
+    # stays off Tenki. Keep the file name release.yml: npm matches it exactly.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      # Trusted publishing (OIDC) needs Node 22.14+ and npm 11.5.1+; no npm token anywhere.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - run: npm install -g npm@11
+      - run: bun install --frozen-lockfile
+      - run: bun run check
+      - run: bun run build
+      - run: bun run check-package
+      - name: Open the version PR or publish to npm
+        uses: changesets/action@v2
+        with:
+          version-script: bun run version-packages
+          publish-script: bun run release
+          commit-message: "chore: version package"
+          pr-title: "chore: version package"

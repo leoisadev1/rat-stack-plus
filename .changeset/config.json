@@ -1,0 +1,14 @@
+{
+  "$schema": "../node_modules/@changesets/config/schema.json",
+  "changelog": "@changesets/changelog-git",
+  "commit": false,
+  "access": "public",
+  "baseBranch": "main",
+  "changedFilePatterns": [
+    "src/**",
+    "vendor/**",
+    "package.json",
+    "tsdown.config.ts",
+    "README.md"
+  ]
+}
